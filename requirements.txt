@@ -1,0 +1,7 @@
+langgraph
+langchain
+beautifulsoup4
+playwright
+python-dotenv
+lxml
+dashscope

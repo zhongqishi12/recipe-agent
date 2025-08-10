@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+*.pyo
+*.pyd
+
+# 环境变量
+.env
+
+# VSCode
+.vscode/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Playwright
+playwright/.cache/
+
+# 数据和日志
+*.log
+data/
+
+# MacOS
+.DS_Store
+
+# 其他
+*.swp
+*.bak
+
