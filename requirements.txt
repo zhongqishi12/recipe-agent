@@ -1,7 +1,10 @@
-langgraph
+langgraph~=0.6.4
 langchain
-beautifulsoup4
-playwright
-python-dotenv
+beautifulsoup4~=4.13.4
+playwright~=1.54.0
+python-dotenv~=1.1.1
 lxml
 dashscope
+langchain-community~=0.3.27
+langchain-core~=0.3.74
+langchain-openai~=0.3.29
