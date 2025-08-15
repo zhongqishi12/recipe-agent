@@ -5,19 +5,29 @@ load_dotenv()
 
 from langgraph.graph import StateGraph
 from state import RecipeAppState, RecipeGraphState
-from nodes.graph import scrape_node, generate_node
+from nodes.graph import scrape_node, generate_node, parse_recipes_node
+import asyncio
 
-graph = StateGraph(RecipeGraphState)
-graph.add_node("scrape", scrape_node)
-graph.add_node("generate", generate_node)
-graph.set_entry_point("scrape")
-graph.add_edge("scrape", "generate")
 
-recipe_graph = graph.compile()
-result = recipe_graph.invoke({
-    "ingredients": ["鸡肉", "蘑菇", "洋葱"],
-    "requirements": "低脂肪，高蛋白，适合家庭晚餐",
-    "target_url": "https://example.com/recipe-page"  # 替换为实际的食谱页面URL
-})
-print(result)
+async def main():
+    workflow = StateGraph(RecipeGraphState)
+    # 添加节点
+    workflow.add_node("scraper", scrape_node)
+    workflow.add_node("parser", parse_recipes_node)
+    workflow.add_node("generator", generate_node)
 
+    workflow.set_entry_point("scraper")
+    # 添加边，定义流程
+    workflow.add_edge("scraper", "parser")
+    workflow.add_edge("parser", "generator")
+
+    recipe_graph = workflow.compile()
+    result = await recipe_graph.ainvoke({
+        "ingredients": ["鸡肉", "蘑菇", "洋葱"],
+        "requirements": "低脂肪，高蛋白，适合家庭晚餐",
+        "max_recipes": 5
+    })
+    print(result)
+
+if __name__ == "__main__":
+    asyncio.run(main())
