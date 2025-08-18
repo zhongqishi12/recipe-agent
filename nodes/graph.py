@@ -2,24 +2,70 @@
 import os
 from typing import TypedDict, List
 from langchain_core.prompts import ChatPromptTemplate
-from state import RecipeGraphState, RecipeAppState, ParsedRecipe
+from state import RecipeGraphState, RecipeAppState, ParsedRecipe, UserInputPlan
 from tools.tools import scrape_xiachufang_recipe
+from tools.douguo_scraper import DouguoRecipeScraper
 from utils.llm_provider import llm
-from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.output_parsers import JsonOutputParser, PydanticOutputParser
+from datetime import datetime
+
+
+# --- 新增的初始节点函数 ---
+def parse_input_node(state: RecipeGraphState):
+    """
+    使用LLM解析用户的原始输入，提取关键信息并形成规划。
+    """
+    print("--- 节点: 解析用户输入 ---")
+
+    parser = PydanticOutputParser(pydantic_object=UserInputPlan)
+
+    prompt = ChatPromptTemplate.from_template(
+        """你是一个任务规划AI。请解析用户的请求，并提取出关键信息。
+
+        {format_instructions}
+
+        用户请求如下:
+        "{user_query}"
+        """
+    )
+
+    chain = prompt | llm | parser
+
+    plan = chain.invoke({
+        "user_query": state['user_raw_query'],
+        "format_instructions": parser.get_format_instructions()
+    })
+
+    # 将解析出的规划更新到State中
+    state['search_keywords'] = plan.search_keywords
+    state['user_ingredients'] = plan.user_ingredients
+    state['recipe_count'] = plan.recipe_count
+    state['requirements'] = plan.other_requirements
+
+    print(f"  > 解析完成: 关键词={plan.search_keywords}, 食材={plan.user_ingredients}, 数量={plan.recipe_count}")
+    return state
 
 
 # 3. 定义图的节点
 async def scrape_node(state: RecipeGraphState):
     print("--- 节点: 爬取内容 ---")
-    ingredient_list = state['ingredients']
-    ingredient_str = ' '.join(ingredient_list)
-    print(f"爬取食材: {ingredient_str}")
-    scraped_content = await scrape_xiachufang_recipe.ainvoke({
-        "ingredient": ingredient_str,
-        "max_recipes": 1
-    })
+    # 使用 search_keywords 作为爬取关键字
+    search_keywords = state.get('search_keywords', '')
+    print(f"爬取关键字: {search_keywords}")
+    max_recipes = state.get('recipe_count', 1)
+
+    # 使用豆果美食爬虫
+    douguo_scraper = DouguoRecipeScraper()
+    # 将搜索关键字转换为列表格式
+    if isinstance(search_keywords, str):
+        keywords_list = search_keywords.split()
+    else:
+        keywords_list = search_keywords
+
+    scraped_content = await douguo_scraper.scrape_douguo(keywords_list, max_recipes)
     state['scraped_contents'] = scraped_content
     return state
+
 
 def parse_recipes_node(state: RecipeGraphState):
     """解析爬取的食谱内容"""
@@ -34,6 +80,9 @@ def parse_recipes_node(state: RecipeGraphState):
         """你是一个精通网页解析的AI助手。你的任务是从给定的HTML片段中提取菜谱信息。
 
         根据以下HTML内容，提取菜谱的标题、所有用料（包括名称和用量）以及详细的烹饪步骤。
+
+        页面标题: {page_title}
+        来源URL: {origin_url}
 
         {format_instructions}
 
@@ -52,15 +101,70 @@ def parse_recipes_node(state: RecipeGraphState):
             # 调用我们创建好的解析链
             parsed_recipe = chain.invoke({
                 "html_content": content['content'],
+                "page_title": content['title'],
+                "origin_url": content['url'],
                 "format_instructions": parser.get_format_instructions()
             })
+            # 确保origin_url被设置
+            parsed_recipe['origin_url'] = content['url']
             parsed_recipes.append(parsed_recipe)
+            print(f"  > 解析成功: {content['url']}")
+            print(f"  > <UNK>: {content['title']}")
+            print(f"  > <UNK>: {content['content']}")
         except Exception as e:
             print(f"  !! 解析失败: {content['url']}, 错误: {e}")
             # 即使某个页面解析失败，也继续处理下一个
             continue
 
     state['parsed_recipes'] = parsed_recipes
+    return state
+
+
+# 5. !!! 新增的核心智能节点：筛选食谱 !!!
+def filter_recipes_node(state: RecipeGraphState):
+    """使用LLM判断每个菜谱与用户食材的匹配度，并进行筛选"""
+    print("--- 节点: 正在筛选食谱 ---")
+    user_ingredients = state['user_ingredients']
+    parsed_recipes = state['parsed_recipes']
+
+    # 定义筛选标准
+    MIN_MATCH_COUNT = 2  # 至少要有2个食材匹配
+
+    good_recipes = []
+
+    for recipe in parsed_recipes:
+        recipe_ingredients = [ing['name'] for ing in recipe['ingredients']]
+
+        # 简单规则预筛选：计算匹配的食材数量
+        match_count = 0
+        matched_ingredients = []
+        missing_ingredients = list(user_ingredients)
+
+        for user_ing in user_ingredients:
+            # 简单匹配逻辑，可扩展为LLM判断或模糊匹配
+            if any(user_ing in recipe_ing for recipe_ing in recipe_ingredients):
+                match_count += 1
+                matched_ingredients.append(user_ing)
+                if user_ing in missing_ingredients:
+                    missing_ingredients.remove(user_ing)
+
+        print(f"  > 评估菜谱 '{recipe['title']}'...")
+        print(f"    - 匹配到 {match_count} 个食材: {matched_ingredients}")
+
+        # 应用筛选规则
+        if match_count >= MIN_MATCH_COUNT:
+            print("    - ✅ 符合要求, 保留该食谱。")
+            # 可以在这里附加分析结果，供下一步使用
+            recipe['analysis'] = {
+                "match_count": match_count,
+                "matched_ingredients": matched_ingredients,
+                "missing_ingredients_from_user_list": missing_ingredients
+            }
+            good_recipes.append(recipe)
+        else:
+            print("    - ❌ 食材匹配度过低, 舍弃该食谱。")
+
+    state['filtered_recipes'] = good_recipes
     return state
 
 
@@ -110,12 +214,15 @@ def generate_final_recipe_node(state: RecipeGraphState):
             md_parts.append("1. 未能解析出步骤信息。")
 
         # 将当前食谱的所有Markdown部分合并成一个字符串
+        # 如果有url信息，追加到Markdown末尾
+        if 'origin_url' in recipe_data and recipe_data['origin_url']:
+            md_parts.append(f"\n> 来源: [{recipe_data['origin_url']}]({recipe_data['origin_url']})")
         final_recipes_md.append("\n".join(md_parts))
 
     # 4. 如果有多个食谱，用分隔线将它们隔开
     final_output = "\n\n---\n\n".join(final_recipes_md)
-
     state['final_recipe'] = final_output
+
     print("--- 节点: 最终结果已格式化完成！ ---")
     return state
 
@@ -129,9 +236,56 @@ def generate_query_node(state: RecipeAppState):
     return state
 
 
+def save_to_markdown_node(state: RecipeGraphState):
+    """将所有食谱保存到一个Markdown文件"""
+    print("--- 节点: 保存为Markdown文件 ---")
 
+    if not state.get('final_recipe'):
+        print(" !! 没有可用的最终食谱内容，无法保存。")
+        state['output_file_path'] = ""
+        return state
 
-def handle_error_node(state: RecipeAppState):
-    print("节点: handle_error")
-    state['error_message'] = "多次尝试后无法获取有效食谱内容。"
+    try:
+        # 创建输出目录
+        output_dir = "output"
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 生成文件名
+        # 使用搜索关键字生成文件名，取前2个关键词
+        keywords = state.get('search_keywords', '')
+        if isinstance(keywords, list):
+            keywords_str = "_".join(keywords[:2])
+        else:
+            keywords_str = "_".join(str(keywords).split()[:2])
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        recipe_count = len(state.get('parsed_recipes', []))
+        filename = f"recipes_{keywords_str}_{recipe_count}份_{timestamp}.md"
+        file_path = os.path.join(output_dir, filename)
+
+        # 写入文件
+        with open(file_path, 'w', encoding='utf-8') as f:
+            # 文件头部信息
+            f.write(f"# 食谱搜索结果\n\n")
+            # 使用 user_ingredients 字段
+            f.write(f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            f.write("---\n\n")
+
+            # 添加目录
+            if recipe_count > 1:
+                f.write("## 目录\n\n")
+                for i, recipe in enumerate(state.get('parsed_recipes', [])):
+                    title = recipe.get('title', f'食谱{i + 1}')
+                    f.write(f"{i + 1}. [{title}](#{i + 1}-{title.replace(' ', '-').lower()})\n")
+                f.write("\n---\n\n")
+
+            # 食谱内容
+            f.write(state['final_recipe'])
+
+        state['output_file_path'] = file_path
+        print(f"--- {recipe_count}份食谱已保存到: {file_path} ---")
+
+    except Exception as e:
+        print(f" !! 保存文件失败: {e}")
+        state['output_file_path'] = ""
+
     return state
