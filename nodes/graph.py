@@ -10,6 +10,7 @@ from tools.douguo_scraper import DouguoRecipeScraper
 from utils.llm_provider import llm
 from langchain_core.output_parsers import JsonOutputParser, PydanticOutputParser
 from datetime import datetime
+from utils.recipe_format import RecipeFormatter
 
 
 # --- 新增的初始节点函数 ---
@@ -182,7 +183,6 @@ def generate_final_recipe_node(state: RecipeGraphState):
         print(" !! 没有可用的解析后食谱，无法生成。")
         return state
 
-    from utils.recipe_formatter import RecipeFormatter
     formatter = RecipeFormatter()
     state['final_recipe'] = formatter.format_recipes_to_markdown(state['filtered_recipes'])
 
