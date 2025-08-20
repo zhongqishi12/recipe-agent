@@ -8,6 +8,7 @@ from state import RecipeAppState, RecipeGraphState
 from nodes.graph import scrape_node, generate_final_recipe_node, parse_recipes_node, save_to_markdown_node, \
     parse_input_node
 import asyncio
+from nodes.graph import filter_recipes_node
 
 
 async def main():
@@ -15,17 +16,17 @@ async def main():
     # 添加节点
     workflow.add_node("input_parser", parse_input_node)
     workflow.add_node("scraper", scrape_node)
-    workflow.add_node("parser", parse_recipes_node)
+    workflow.add_node("filter", filter_recipes_node)
     workflow.add_node("generator", generate_final_recipe_node)
     workflow.add_node("save_md", save_to_markdown_node)  # 新增保存为Markdown的节点
 
     workflow.set_entry_point("input_parser")
 
     # 添加边，定义流程
-    workflow.add_edge("input_parser", "scraper")  # 理解之后再去爬
-    workflow.add_edge("scraper", "parser")
-    workflow.add_edge("parser", "generator")
-    workflow.add_edge("generator", "save_md")  # 新增边，连接到保存节点
+    workflow.add_edge("input_parser", "scraper")
+    workflow.add_edge("scraper", "filter")
+    workflow.add_edge("filter", "generator")
+    workflow.add_edge("generator", "save_md")
 
     recipe_graph = workflow.compile()
     # 只需要传入最原始的自然语言请求

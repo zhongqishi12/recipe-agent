@@ -1,5 +1,5 @@
 # types/state.py
-from typing import TypedDict, List
+from typing import TypedDict, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -7,6 +7,12 @@ class Ingredient(BaseModel):
     name: str = Field(description="食材的名称")
     quantity: str = Field(description="食材的数量或用量")
 
+
+class FilterDecision(BaseModel):
+    """用于描述LLM对单个菜谱的筛选决定"""
+    decision: bool = Field(description="如果菜谱符合用户需求，则为 True，否则为 False")
+    reasoning: str = Field(description="做出该决定的简要原因，例如'食材匹配度高且符合健身需求'")
+    score: int = Field(description="根据匹配度给出的1-10分的评分")
 
 class ScrapedContent(TypedDict):
     url: str  # 爬取的食谱页面URL
@@ -16,17 +22,12 @@ class ScrapedContent(TypedDict):
 
 
 class ParsedRecipe(BaseModel):
+    """定义了解析后单个菜谱的结构"""
     title: str = Field(description="菜谱的标题")
+    url: str = Field(description="菜谱的原始链接")
     ingredients: List[Ingredient] = Field(description="菜谱所需食材的列表")
-    steps: List[str] = Field(description="烹饪步骤的列表，每一步是一个字符串")
-    origin_url: str = Field(description="菜谱的来源URL")
-
-
-class FilterDecision(BaseModel):
-    """用于描述LLM对单个菜谱的筛选决定"""
-    decision: bool = Field(description="如果菜谱符合用户需求，则为 True，否则为 False")
-    reasoning: str = Field(description="做出该决定的简要原因，例如'食材匹配度高且符合健身需求'")
-    score: int = Field(description="根据匹配度给出的1-10分的评分")
+    steps: List[str] = Field(description="烹饪步骤的列表")
+    analysis: Optional[dict] = Field(description="关于此菜谱的分析结果", default=None)
 
 
 # --- 用于解析用户输入的Pydantic模型 ---
@@ -47,9 +48,10 @@ class RecipeGraphState(TypedDict):
 
     # --- 爬虫阶段 ---
     target_url: str
-    scraped_recipes: List[dict]  # 爬虫节点输出的原始数据
     scraped_contents: List[ScrapedContent]  # 爬取的内容列表
-    parsed_recipes: List[ParsedRecipe]  # 解析节点输出的结构化数据
+
+    # --- 解析阶段 ---
+    filtered_recipes: List[ParsedRecipe]
 
     # --- 生成阶段 ---
     final_recipe: str  # Markdown格式的菜谱，包括所有的

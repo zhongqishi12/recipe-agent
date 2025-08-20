@@ -2,7 +2,9 @@
 import os
 from typing import TypedDict, List
 from langchain_core.prompts import ChatPromptTemplate
-from state import RecipeGraphState, RecipeAppState, ParsedRecipe, UserInputPlan
+
+from nodes.chains import filter_chain
+from state import RecipeGraphState, RecipeAppState, ParsedRecipe, UserInputPlan, FilterDecision
 from tools.tools import scrape_xiachufang_recipe
 from tools.douguo_scraper import DouguoRecipeScraper
 from utils.llm_provider import llm
@@ -122,47 +124,48 @@ def parse_recipes_node(state: RecipeGraphState):
 
 # 5. !!! 新增的核心智能节点：筛选食谱 !!!
 def filter_recipes_node(state: RecipeGraphState):
-    """使用LLM判断每个菜谱与用户食材的匹配度，并进行筛选"""
-    print("--- 节点: 正在筛选食谱 ---")
+    """(智能版) 使用LLM判断每个菜谱与用户需求的匹配度，并进行筛选"""
+    print("--- 节点: 正在用LLM智能筛选食谱 ---")
     user_ingredients = state['user_ingredients']
-    parsed_recipes = state['parsed_recipes']
+    other_requirements = state['requirements']
+    scraped_contents = state['scraped_contents']
 
-    # 定义筛选标准
-    MIN_MATCH_COUNT = 2  # 至少要有2个食材匹配
+    MIN_SCORE_THRESHOLD = 7  # 只保留评分在7分及以上的菜谱
 
     good_recipes = []
 
-    for recipe in parsed_recipes:
-        recipe_ingredients = [ing['name'] for ing in recipe['ingredients']]
+    for recipe in scraped_contents:
+        # 将菜谱的食材列表转换为简单字符串，方便输入
+        recipe_ingredients_str = ", ".join([f"{ing['name']}({ing['quantity']})" for ing in recipe['ingredients']])
 
-        # 简单规则预筛选：计算匹配的食材数量
-        match_count = 0
-        matched_ingredients = []
-        missing_ingredients = list(user_ingredients)
+        print(f"  > 正在评估菜谱 '{recipe['title']}'...")
 
-        for user_ing in user_ingredients:
-            # 简单匹配逻辑，可扩展为LLM判断或模糊匹配
-            if any(user_ing in recipe_ing for recipe_ing in recipe_ingredients):
-                match_count += 1
-                matched_ingredients.append(user_ing)
-                if user_ing in missing_ingredients:
-                    missing_ingredients.remove(user_ing)
+        try:
+            # 对每个菜谱调用LLM进行评审
+            decision_result = filter_chain.invoke({
+                "user_ingredients": ", ".join(user_ingredients),
+                "other_requirements": other_requirements,
+                "recipe_title": recipe['title'],
+                "recipe_ingredients": recipe_ingredients_str,
+                "recipe_steps": "\n".join(recipe['steps']),
+                "format_instructions": PydanticOutputParser(pydantic_object=FilterDecision).get_format_instructions()
+            })
 
-        print(f"  > 评估菜谱 '{recipe['title']}'...")
-        print(f"    - 匹配到 {match_count} 个食材: {matched_ingredients}")
+            print(
+                f"- LLM决策: {decision_result.decision}, 评分: {decision_result.score}, 原因: {decision_result.reasoning}"
+            )
 
-        # 应用筛选规则
-        if match_count >= MIN_MATCH_COUNT:
-            print("    - ✅ 符合要求, 保留该食谱。")
-            # 可以在这里附加分析结果，供下一步使用
-            recipe['analysis'] = {
-                "match_count": match_count,
-                "matched_ingredients": matched_ingredients,
-                "missing_ingredients_from_user_list": missing_ingredients
-            }
-            good_recipes.append(recipe)
-        else:
-            print("    - ❌ 食材匹配度过低, 舍弃该食谱。")
+            # 根据LLM的决定和评分进行筛选
+            if decision_result.decision and decision_result.score >= MIN_SCORE_THRESHOLD:
+                print("    - ✅ 符合要求, 保留该食谱。")
+                # 附加LLM的分析结果，供下一步或用户查看
+                good_recipes.append(recipe)
+            else:
+                print("- ❌ 不符合要求, 舍弃该食谱。")
+
+        except Exception as e:
+            print(f"  !! LLM评估失败: {recipe['title']}, 错误: {e}")
+            continue
 
     state['filtered_recipes'] = good_recipes
     return state
@@ -175,7 +178,7 @@ def generate_final_recipe_node(state: RecipeGraphState):
     print("--- 节点: 正在整理并格式化最终结果 ---")
 
     # 1. 检查是否有可用的解析后食谱
-    if not state['parsed_recipes']:
+    if not state['filtered_recipes']:
         print(" !! 没有可用的解析后食谱，无法生成。")
         state['final_recipe'] = "抱歉，未能从目标网页解析出有效的食谱信息。"
         return state
@@ -184,18 +187,13 @@ def generate_final_recipe_node(state: RecipeGraphState):
     final_recipes_md = []
 
     # 3. 遍历所有解析成功的食谱，并为每一个生成Markdown文本
-    for i, recipe_data in enumerate(state['parsed_recipes']):
+    for i, recipe_data in enumerate(state['filtered_recipes']):
         # recipe_data 的结构是: {'title': '...', 'ingredients': [...], 'steps': [...]}
 
         # 使用f-string构建Markdown字符串
-        md_parts = []
-
-        # 添加标题
-        md_parts.append(f"### {i + 1}. {recipe_data.get('title', '无标题食谱')}")
-        md_parts.append("")  # 空行
+        md_parts = [f"### {i + 1}. {recipe_data.get('title', '无标题食谱')}", "", "**- 用料清单 -**"]
 
         # 添加用料清单
-        md_parts.append("**- 用料清单 -**")
         ingredients = recipe_data.get('ingredients', [])
         if ingredients:
             for ing in ingredients:
@@ -213,7 +211,6 @@ def generate_final_recipe_node(state: RecipeGraphState):
         else:
             md_parts.append("1. 未能解析出步骤信息。")
 
-        # 将当前食谱的所有Markdown部分合并成一个字符串
         # 如果有url信息，追加到Markdown末尾
         if 'origin_url' in recipe_data and recipe_data['origin_url']:
             md_parts.append(f"\n> 来源: [{recipe_data['origin_url']}]({recipe_data['origin_url']})")
