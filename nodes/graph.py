@@ -56,6 +56,7 @@ async def scrape_node(state: RecipeGraphState):
     search_keywords = state.get('search_keywords', '')
     print(f"爬取关键字: {search_keywords}")
     max_recipes = state.get('recipe_count', 1)
+    scrape_recipes = max_recipes * 5  # 爬取数量是需要数量的2倍，方便后续筛选
 
     # 使用豆果美食爬虫
     douguo_scraper = DouguoRecipeScraper()
@@ -65,7 +66,7 @@ async def scrape_node(state: RecipeGraphState):
     else:
         keywords_list = search_keywords
 
-    scraped_content = await douguo_scraper.scrape_douguo(keywords_list, max_recipes)
+    scraped_content = await douguo_scraper.scrape_douguo(keywords_list, scrape_recipes)
     state['scraped_contents'] = scraped_content
     return state
 
@@ -103,7 +104,6 @@ def parse_recipes_node(state: RecipeGraphState):
         try:
             # 调用我们创建好的解析链
             parsed_recipe = chain.invoke({
-                "html_content": content['content'],
                 "page_title": content['title'],
                 "origin_url": content['url'],
                 "format_instructions": parser.get_format_instructions()
@@ -131,7 +131,7 @@ def filter_recipes_node(state: RecipeGraphState):
     other_requirements = state['requirements']
     scraped_contents = state['scraped_contents']
 
-    MIN_SCORE_THRESHOLD = 7  # 只保留评分在7分及以上的菜谱
+    MIN_SCORE_THRESHOLD = 6  # 只保留评分在7分及以上的菜谱
 
     good_recipes = []
 

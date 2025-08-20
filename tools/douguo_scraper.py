@@ -8,6 +8,8 @@ class DouguoRecipeScraper:
     def __init__(self):
         self.base_url = "https://www.douguo.com"
         self.recipes_data = []
+        # 定义状态文件的路径
+        self.AUTH_STATE_PATH = "douguo_auth_state.json"
 
     @staticmethod
     def extract_ingredients(html_content: str) -> List[Dict[str, str]]:
@@ -141,20 +143,24 @@ class DouguoRecipeScraper:
         print(f"--- 工具: 收到关键词 '{search_keywords}', 拼接为 '{search_query}' 进行搜索 ---")
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=False)
-            page = await browser.new_page()
-            await page.goto(self.base_url + "/jingxuan")
-            await page.wait_for_load_state('networkidle')
+            # !!! 核心改动: 从文件加载身份状态来创建浏览器上下文 !!!
+            context = await browser.new_context(storage_state=self.AUTH_STATE_PATH)
+            page = await context.new_page()
+            await page.goto(self.base_url)
+            await page.wait_for_timeout(3000)  # 强制等待3秒
 
             # 查找搜索框并输入关键词
             search_input = "#global_search_inpt"
             await page.fill(search_input, search_query)
             print(f"已输入搜索关键词: {search_query}")
+            await page.wait_for_timeout(3000)  # 强制等待3秒
 
             # 点击搜索按钮
             search_button = "input[type='submit'].lib"
             await page.click(search_button)
-            await page.wait_for_load_state('networkidle')
+            # await page.wait_for_load_state('networkidle')
             print("搜索已提交，等待结果加载...")
+            await page.wait_for_timeout(5000)
 
             # 获取搜索结果页面的HTML内容
             html_content = await page.content()
@@ -164,8 +170,8 @@ class DouguoRecipeScraper:
             recipes_content = []
             for url in recipe_urls:
                 await page.goto(url)
-                await page.wait_for_load_state('networkidle')
                 print(f"正在爬取食谱: {url}")
+                await page.wait_for_timeout(2000)
                 # 获取标题和内容
                 title = await page.locator('h1.title').inner_text()
                 print(f"食谱标题: {title}")

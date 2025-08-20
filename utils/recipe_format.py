@@ -1,10 +1,11 @@
 from typing import List, Dict
+from state import RecipeGraphState, ParsedRecipe
 
 
 class RecipeFormatter:
     """食谱格式化工具类"""
 
-    def format_recipes_to_markdown(self, recipes: List[Dict]) -> str:
+    def format_recipes_to_markdown(self, recipes: List[ParsedRecipe]) -> str:
         """将多个食谱格式化为Markdown文本"""
         if not recipes:
             return "暂无食谱信息。"
@@ -15,7 +16,7 @@ class RecipeFormatter:
         ]
         return "\n\n---\n\n".join(formatted_recipes)
 
-    def _format_single_recipe(self, index: int, recipe_data: Dict) -> str:
+    def _format_single_recipe(self, index: int, recipe_data: ParsedRecipe) -> str:
         """格式化单个食谱为Markdown文本"""
         md_parts = [
             f"### {index + 1}. {recipe_data.get('title', '无标题食谱')}",
@@ -28,8 +29,8 @@ class RecipeFormatter:
         md_parts.append("**- 烹饪步骤 -**")
         md_parts.extend(self._format_steps(recipe_data.get('steps', [])))
 
-        if recipe_data.get('origin_url'):
-            md_parts.append(f"\n> 来源: [{recipe_data['origin_url']}]({recipe_data['origin_url']})")
+        if recipe_data.get('url'):
+            md_parts.append(f"\n> 来源: [{recipe_data['url']}]({recipe_data['url']})")
 
         return "\n".join(md_parts)
 
