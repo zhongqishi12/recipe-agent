@@ -180,45 +180,11 @@ def generate_final_recipe_node(state: RecipeGraphState):
     # 1. 检查是否有可用的解析后食谱
     if not state['filtered_recipes']:
         print(" !! 没有可用的解析后食谱，无法生成。")
-        state['final_recipe'] = "抱歉，未能从目标网页解析出有效的食谱信息。"
         return state
 
-    # 2. 准备一个列表，用来存放每个食谱的Markdown格式字符串
-    final_recipes_md = []
-
-    # 3. 遍历所有解析成功的食谱，并为每一个生成Markdown文本
-    for i, recipe_data in enumerate(state['filtered_recipes']):
-        # recipe_data 的结构是: {'title': '...', 'ingredients': [...], 'steps': [...]}
-
-        # 使用f-string构建Markdown字符串
-        md_parts = [f"### {i + 1}. {recipe_data.get('title', '无标题食谱')}", "", "**- 用料清单 -**"]
-
-        # 添加用料清单
-        ingredients = recipe_data.get('ingredients', [])
-        if ingredients:
-            for ing in ingredients:
-                md_parts.append(f"* {ing.get('name', '')}: {ing.get('quantity', '')}")
-        else:
-            md_parts.append("* 未能解析出用料信息。")
-        md_parts.append("")  # 空行
-
-        # 添加烹饪步骤
-        md_parts.append("**- 烹饪步骤 -**")
-        steps = recipe_data.get('steps', [])
-        if steps:
-            for idx, step in enumerate(steps):
-                md_parts.append(f"{idx + 1}. {step}")
-        else:
-            md_parts.append("1. 未能解析出步骤信息。")
-
-        # 如果有url信息，追加到Markdown末尾
-        if 'origin_url' in recipe_data and recipe_data['origin_url']:
-            md_parts.append(f"\n> 来源: [{recipe_data['origin_url']}]({recipe_data['origin_url']})")
-        final_recipes_md.append("\n".join(md_parts))
-
-    # 4. 如果有多个食谱，用分隔线将它们隔开
-    final_output = "\n\n---\n\n".join(final_recipes_md)
-    state['final_recipe'] = final_output
+    from utils.recipe_formatter import RecipeFormatter
+    formatter = RecipeFormatter()
+    state['final_recipe'] = formatter.format_recipes_to_markdown(state['filtered_recipes'])
 
     print("--- 节点: 最终结果已格式化完成！ ---")
     return state
@@ -247,7 +213,6 @@ def save_to_markdown_node(state: RecipeGraphState):
         output_dir = "output"
         os.makedirs(output_dir, exist_ok=True)
 
-        # 生成文件名
         # 使用搜索关键字生成文件名，取前2个关键词
         keywords = state.get('search_keywords', '')
         if isinstance(keywords, list):
