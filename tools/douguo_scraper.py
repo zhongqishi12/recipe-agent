@@ -1,3 +1,6 @@
+import random
+from math import ceil
+
 from bs4 import BeautifulSoup
 from typing import List, Dict
 
@@ -132,15 +135,31 @@ class DouguoRecipeScraper:
                 if absolute_url not in found_urls:
                     found_urls.append(absolute_url)
 
-        # 8. 根据用户指定的数量，返回列表的切片
-        return found_urls[:count]
+        # 首先，检查找到的URL数量是否足够
+        if len(found_urls) <= count:
+            # 如果找到的URL总数小于或等于需要的数量，就打乱顺序后全部返回
+            random.shuffle(found_urls)
+            return found_urls
+        else:
+            # 如果URL数量充足，就从中随机抽取指定数量的URL
+            return random.sample(found_urls, count)
 
-    async def scrape_douguo(self, search_keywords: List[str], search_limit: int = 2):
+    async def scrape_douguo(
+        self,
+        search_keywords: List[str],
+        total_recipes_needed: int = 9, # 改为总共需要多少食谱
+        pages_to_scrape: int = 3       # 希望爬取的总页数
+    ):
         """
         根据食材关键词，使用 Playwright 异步爬取豆果美食网站，返回前 search_limit 个食谱详情内容。
         """
         search_query = " ".join(search_keywords)
         print(f"--- 工具: 收到关键词 '{search_keywords}', 拼接为 '{search_query}' 进行搜索 ---")
+        # 计算每页大概需要随机抽取多少个
+        recipes_per_page = ceil(total_recipes_needed / pages_to_scrape)
+
+        aggregated_urls = []  # 用于存放从各个页面随机抽取出来的URL
+
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=False)
             # !!! 核心改动: 从文件加载身份状态来创建浏览器上下文 !!!
@@ -162,13 +181,34 @@ class DouguoRecipeScraper:
             print("搜索已提交，等待结果加载...")
             await page.wait_for_timeout(5000)
 
-            # 获取搜索结果页面的HTML内容
-            html_content = await page.content()
-            # 通过 extract_recipe_urls 获取所有食谱URL
-            recipe_urls = self.extract_recipe_urls(html_content, search_limit)
+            for i in range(pages_to_scrape):
+                # 智能等待：等待搜索结果列表容器出现，而不是固定等待
+                results_container_selector = "ul.cook-list"
+                await page.locator(results_container_selector).wait_for(timeout=30000)
+
+                # 获取搜索结果页面的HTML内容
+                html_content = await page.content()
+                # 通过 extract_recipe_urls 获取所有食谱URL
+                recipe_urls = self.extract_recipe_urls(html_content, recipes_per_page)
+                aggregated_urls.extend(recipe_urls)
+
+                # 检查是否已达到目标数量
+                if len(aggregated_urls) >= total_recipes_needed:
+                    print("已收集到足够数量的食谱URL，停止翻页。")
+                    break
+
+                # 寻找并点击“下一页”按钮
+                next_page_link = page.locator('a.anext:has-text("下一页")')
+                if await next_page_link.count() > 0:
+                    print("  > 找到“下一页”按钮，准备点击...")
+                    await next_page_link.click()
+                    await page.wait_for_timeout(2000)
+                else:
+                    print("  > 未找到“下一页”按钮，已是最后一页。")
+                    break
 
             recipes_content = []
-            for url in recipe_urls:
+            for url in aggregated_urls:
                 await page.goto(url)
                 print(f"正在爬取食谱: {url}")
                 await page.wait_for_timeout(2000)

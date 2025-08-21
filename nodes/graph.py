@@ -220,7 +220,7 @@ def save_to_markdown_node(state: RecipeGraphState):
         else:
             keywords_str = "_".join(str(keywords).split()[:2])
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        recipe_count = len(state.get('parsed_recipes', []))
+        recipe_count = len(state.get('filtered_recipes', []))
         filename = f"recipes_{keywords_str}_{recipe_count}份_{timestamp}.md"
         file_path = os.path.join(output_dir, filename)
 
@@ -235,7 +235,7 @@ def save_to_markdown_node(state: RecipeGraphState):
             # 添加目录
             if recipe_count > 1:
                 f.write("## 目录\n\n")
-                for i, recipe in enumerate(state.get('parsed_recipes', [])):
+                for i, recipe in enumerate(state.get('filtered_recipes', [])):
                     title = recipe.get('title', f'食谱{i + 1}')
                     f.write(f"{i + 1}. [{title}](#{i + 1}-{title.replace(' ', '-').lower()})\n")
                 f.write("\n---\n\n")
