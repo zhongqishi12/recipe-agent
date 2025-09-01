@@ -2,6 +2,7 @@
 import os
 from typing import TypedDict, List
 from langchain_core.prompts import ChatPromptTemplate
+from langgraph.graph import StateGraph
 
 from nodes.chains import filter_chain
 from state import RecipeGraphState, RecipeAppState, ParsedRecipe, UserInputPlan, FilterDecision
@@ -251,3 +252,32 @@ def save_to_markdown_node(state: RecipeGraphState):
         state['output_file_path'] = ""
 
     return state
+
+def get_chat_app():
+    # 1. 初始化图
+    workflow = StateGraph(RecipeGraphState)
+
+    # 2. 添加所有需要的节点
+    workflow.add_node("input_parser", parse_input_node)
+    workflow.add_node("scraper", scrape_node)
+    workflow.add_node("parser", parse_recipes_node)  # <--- 关键：添加解析节点
+    workflow.add_node("filter", filter_recipes_node)
+    workflow.add_node("generator", generate_final_recipe_node)
+    workflow.add_node("save_md", save_to_markdown_node)
+
+    # 3. 设置入口点
+    workflow.set_entry_point("input_parser")
+
+    # 4. 定义正确的数据流转边
+    workflow.add_edge("input_parser", "scraper")
+    workflow.add_edge("scraper", "parser")  # <--- 关键：先爬取，再解析
+    workflow.add_edge("parser", "filter")  # <--- 关键：用解析后的数据去筛选
+    workflow.add_edge("filter", "generator")
+    workflow.add_edge("generator", "save_md")
+    # 如果 save_md 是最后一步，可以让它指向 END
+    # workflow.add_edge("save_md", END) # 示例
+
+    # 5. 编译图，并命名为 app 以便导出
+    app = workflow.compile()
+    return app
+

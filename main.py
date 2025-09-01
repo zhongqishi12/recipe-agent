@@ -31,7 +31,7 @@ async def main():
     recipe_graph = workflow.compile()
     # 只需要传入最原始的自然语言请求
     inputs = {
-        "user_raw_query": "我希望获取2个三明治早餐食谱，主要食材包括面包，生菜和番茄，做法要简单点"
+        "user_raw_query": "我希望获取1个三明治早餐食谱，主要食材包括面包，生菜 番茄，做法要简单点"
     }
     result = await recipe_graph.ainvoke(inputs)
     print(result)
