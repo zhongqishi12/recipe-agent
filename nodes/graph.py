@@ -263,7 +263,7 @@ def get_chat_app():
     workflow.add_node("parser", parse_recipes_node)  # <--- 关键：添加解析节点
     workflow.add_node("filter", filter_recipes_node)
     workflow.add_node("generator", generate_final_recipe_node)
-    workflow.add_node("save_md", save_to_markdown_node)
+    #workflow.add_node("save_md", save_to_markdown_node)
 
     # 3. 设置入口点
     workflow.set_entry_point("input_parser")
@@ -273,7 +273,7 @@ def get_chat_app():
     workflow.add_edge("scraper", "parser")  # <--- 关键：先爬取，再解析
     workflow.add_edge("parser", "filter")  # <--- 关键：用解析后的数据去筛选
     workflow.add_edge("filter", "generator")
-    workflow.add_edge("generator", "save_md")
+    #workflow.add_edge("generator", "save_md")
     # 如果 save_md 是最后一步，可以让它指向 END
     # workflow.add_edge("save_md", END) # 示例
 
