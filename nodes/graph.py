@@ -20,6 +20,7 @@ def parse_input_node(state: RecipeGraphState):
     使用LLM解析用户的原始输入，提取关键信息并形成规划。
     """
     print("--- 节点: 解析用户输入 ---")
+    state.setdefault("messages", []).append({"role": "assistant", "content": "🤔 正在解析你的需求..."})
 
     parser = PydanticOutputParser(pydantic_object=UserInputPlan)
 
@@ -53,6 +54,7 @@ def parse_input_node(state: RecipeGraphState):
 # 3. 定义图的节点
 async def scrape_node(state: RecipeGraphState):
     print("--- 节点: 爬取内容 ---")
+    state.setdefault("messages", []).append({"role": "assistant", "content": "🔍 正在搜索并爬取食谱，请稍候..."})
     # 使用 search_keywords 作为爬取关键字
     search_keywords = state.get('search_keywords', '')
     print(f"爬取关键字: {search_keywords}")
@@ -75,6 +77,7 @@ async def scrape_node(state: RecipeGraphState):
 def parse_recipes_node(state: RecipeGraphState):
     """解析爬取的食谱内容"""
     print("--- 节点: 解析食谱 ---")
+    state.setdefault("messages", []).append({"role": "assistant", "content": "📝 正在解析爬取的食谱内容..."})
     scraped_contents = state['scraped_contents']
     print(f"解析 {len(scraped_contents)} 个爬取的食谱内容...")
     print(scraped_contents)
@@ -128,19 +131,20 @@ def parse_recipes_node(state: RecipeGraphState):
 def filter_recipes_node(state: RecipeGraphState):
     """(智能版) 使用LLM判断每个菜谱与用户需求的匹配度，并进行筛选"""
     print("--- 节点: 正在用LLM智能筛选食谱 ---")
+    state.setdefault("messages", []).append({"role": "assistant", "content": "🤖 正在筛选符合你需求的食谱..."})
     user_ingredients = state['user_ingredients']
     other_requirements = state['requirements']
     scraped_contents = state['scraped_contents']
+    expected_count = state.get('recipe_count', 1)  # 获取期望的食谱数量
 
-    MIN_SCORE_THRESHOLD = 6  # 只保留评分在7分及以上的菜谱
-
-    good_recipes = []
+    min_score = 6  # 只保留评分在7分及以上的菜谱
+    recipe_scores = []  # 存储食谱和评分
 
     for recipe in scraped_contents:
         # 将菜谱的食材列表转换为简单字符串，方便输入
         recipe_ingredients_str = ", ".join([f"{ing['name']}({ing['quantity']})" for ing in recipe['ingredients']])
 
-        print(f"  > 正在评估菜谱 '{recipe['title']}'...")
+        print(f"> 正在评估菜谱 '{recipe['title']}'...")
 
         try:
             # 对每个菜谱调用LLM进行评审
@@ -158,10 +162,15 @@ def filter_recipes_node(state: RecipeGraphState):
             )
 
             # 根据LLM的决定和评分进行筛选
-            if decision_result.decision and decision_result.score >= MIN_SCORE_THRESHOLD:
-                print("    - ✅ 符合要求, 保留该食谱。")
+            if decision_result.decision and decision_result.score >= min_score:
+                print("- ✅ 符合要求, 保留该食谱。")
                 # 附加LLM的分析结果，供下一步或用户查看
-                good_recipes.append(recipe)
+                recipe_scores.append({
+                    'recipe': recipe,
+                    'score': decision_result.score,
+                    'decision': decision_result.decision,
+                    'reasoning': decision_result.reasoning
+                })
             else:
                 print("- ❌ 不符合要求, 舍弃该食谱。")
 
@@ -169,7 +178,21 @@ def filter_recipes_node(state: RecipeGraphState):
             print(f"  !! LLM评估失败: {recipe['title']}, 错误: {e}")
             continue
 
-    state['filtered_recipes'] = good_recipes
+    # 按评分从高到低排序
+    recipe_scores.sort(key=lambda x: x['score'], reverse=True)
+
+    # 取前N个最高评分的食谱
+    selected_recipes = recipe_scores[:expected_count]
+
+    print(f"\n--- 筛选结果 ---")
+    print(f"候选食谱总数: {len(recipe_scores)}")
+    print(f"最终选中: {len(selected_recipes)} 份")
+
+    for i, item in enumerate(selected_recipes):
+        print(f"{i + 1}. {item['recipe']['title']} - 评分: {item['score']}")
+
+    # 只保存食谱数据到state
+    state['filtered_recipes'] = [item['recipe'] for item in selected_recipes]
     return state
 
 
@@ -186,8 +209,29 @@ def generate_final_recipe_node(state: RecipeGraphState):
 
     formatter = RecipeFormatter()
     state['final_recipe'] = formatter.format_recipes_to_markdown(state['filtered_recipes'])
-
     print("--- 节点: 最终结果已格式化完成！ ---")
+    return state
+
+
+def output_node(state: RecipeGraphState):
+    """
+    使用LLM对最终的输出进行润色和自然语言组织
+    """
+    print("--- 节点: Output Node（润色结果） ---")
+    state.setdefault("messages", []).append({"role": "assistant", "content": "✨ 正在润色推荐结果..."})
+
+    prompt = ChatPromptTemplate.from_template(
+        """请你把下面的食谱推荐结果整理成更自然的对话回复。
+        保持友好、简洁，让用户觉得是和一个厨艺助手在聊天。
+
+        下面是生成的食谱：
+        {final_recipe}
+        """
+    )
+
+    chain = prompt | llm
+    refined_output = chain.invoke({"final_recipe": state["final_recipe"]})
+    state["final_output"] = refined_output.content
     return state
 
 
@@ -253,6 +297,7 @@ def save_to_markdown_node(state: RecipeGraphState):
 
     return state
 
+
 def get_chat_app():
     # 1. 初始化图
     workflow = StateGraph(RecipeGraphState)
@@ -263,6 +308,7 @@ def get_chat_app():
     workflow.add_node("parser", parse_recipes_node)  # <--- 关键：添加解析节点
     workflow.add_node("filter", filter_recipes_node)
     workflow.add_node("generator", generate_final_recipe_node)
+    workflow.add_node("output", output_node)
     #workflow.add_node("save_md", save_to_markdown_node)
 
     # 3. 设置入口点
@@ -273,6 +319,7 @@ def get_chat_app():
     workflow.add_edge("scraper", "parser")  # <--- 关键：先爬取，再解析
     workflow.add_edge("parser", "filter")  # <--- 关键：用解析后的数据去筛选
     workflow.add_edge("filter", "generator")
+    workflow.add_edge("generator", "output")
     #workflow.add_edge("generator", "save_md")
     # 如果 save_md 是最后一步，可以让它指向 END
     # workflow.add_edge("save_md", END) # 示例
@@ -280,4 +327,3 @@ def get_chat_app():
     # 5. 编译图，并命名为 app 以便导出
     app = workflow.compile()
     return app
-

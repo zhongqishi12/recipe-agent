@@ -1,5 +1,5 @@
 # types/state.py
-from typing import TypedDict, List, Optional
+from typing import TypedDict, List, Optional, Dict
 from pydantic import BaseModel, Field
 
 
@@ -13,6 +13,7 @@ class FilterDecision(BaseModel):
     decision: bool = Field(description="如果菜谱符合用户需求，则为 True，否则为 False")
     reasoning: str = Field(description="做出该决定的简要原因，例如'食材匹配度高且符合健身需求'")
     score: int = Field(description="根据匹配度给出的1-10分的评分")
+
 
 class ScrapedContent(TypedDict):
     url: str  # 爬取的食谱页面URL
@@ -55,6 +56,8 @@ class RecipeGraphState(TypedDict):
 
     # --- 生成阶段 ---
     final_recipe: str  # Markdown格式的菜谱，包括所有的
+    final_output: str  # 最终输出给用户的内容，可能包含总结等
+    messages: List[Dict[str, str]]  # 存放对话/进度消息
     output_file_path: str
 
 

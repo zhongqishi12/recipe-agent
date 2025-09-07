@@ -1,77 +1,116 @@
-# chatbot.py
+# chatbot_gradio.py
 import asyncio
 from typing import Dict, Any
 from dotenv import load_dotenv
-# 仅在主程序入口加载环境变量
+import gradio as gr
+
+# 加载环境变量
 load_dotenv()
 from nodes.graph import get_chat_app
 
 
-
-async def run_recipe_graph(query: str) -> Dict[str, Any]:
-    """
-    异步运行你的菜谱Agent，并处理流式输出，向用户展示思考过程。
-    """
-    # 准备输入
+async def run_recipe_graph_stream(query: str):
     inputs = {"user_raw_query": query}
     app = get_chat_app()
-
-    # 使用 astream_events API (v0.2.0+) 来获取详细的事件流
-    # 这能让我们知道哪个节点正在运行
-    async for event in app.astream_events(inputs, version="v1"):
-        kind = event["event"]
-
-        if kind == "on_chain_start":
-            # 一个新的节点（或链）开始运行时
-            print(f"--- 🧠 Agent开始思考: 正在进入 '{event['name']}' 节点 ---")
-
-        elif kind == "on_chain_end":
-            # 一个节点（或链）结束运行时
-            # 我们可以选择在这里打印该节点的输出，用于调试
-            # print(event['data']['output'])
-            print(f"--- ✅ '{event['name']}' 节点执行完毕 ---")
-
-    # 流结束后，再次调用ainvoke可以方便地获取最终的、完整的状态
-    final_state = await app.ainvoke(inputs)
-    return final_state
+    async for state in app.astream(inputs):
+        yield state.get("messages", [])
 
 
-async def main_chat_loop():
+def chat_interface_stream(user_message, history):
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def run_stream():
+            async for messages in run_recipe_graph_stream(user_message):
+                assistant_msgs = [m["content"] for m in messages if m.get("role") == "assistant"]
+                if assistant_msgs:
+                    # 把多条助手消息合并
+                    yield "\n\n".join(assistant_msgs)
+
+        # 用 iterator 驱动 async generator，而不是 asyncio.run
+        agen = run_stream()
+        while True:
+            try:
+                result = loop.run_until_complete(agen.__anext__())
+                yield result
+            except StopAsyncIteration:
+                break
+
+    except Exception as e:
+        yield f"程序出现错误: {e}"
+
+
+async def async_generator_to_list(async_gen):
+    """将异步生成器转换为列表"""
+    results = []
+    async for item in async_gen:
+        results.append(item)
+    return results
+
+
+def chat_interface(user_message, history):
     """
-    聊天机器人的主循环。
+    非流式版本（备用）
     """
-    print("你好！我是你的智能食谱助手。")
-    print("输入你的需求开始，或者输入 '退出' 来结束对话。")
-    print("-" * 50)
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
-    while True:
-        try:
-            user_input = input("🧑 你说: ")
-        except (KeyboardInterrupt, EOFError):
-            break
+        async def get_final_result():
+            final_messages = None
+            async for messages in run_recipe_graph_stream(user_message):
+                final_messages = messages
+            return final_messages
 
-        if user_input.lower() in ["退出", "exit", "quit", "bye"]:
-            print("🤖 好的，下次再见！")
-            break
+        final_messages = loop.run_until_complete(get_final_result())
 
-        if not user_input.strip():
-            continue
-
-        print("🤖 AI助手: 好的，我正在为你规划，请稍候...")
-        final_result = await run_recipe_graph(user_input)
-
-        print("\n" + "=" * 20 + " 最终结果 " + "=" * 20)
-        # 假设最终结果在'final_output'或'final_recipe'字段，请根据你的State定义调整
-        output_key = "final_output"  # 或者 'final_recipe'
-        if final_result.get(output_key):
-            print(final_result[output_key])
+        if final_messages:
+            # 提取所有助手消息
+            assistant_messages = [
+                msg["content"] for msg in final_messages
+                if msg.get("role") == "assistant"
+            ]
+            return "\n\n".join(assistant_messages)
         else:
-            print("抱歉，我没能生成食谱计划，可能在处理过程中遇到了问题。")
-        print("=" * 52 + "\n")
+            return "抱歉，我没能生成食谱计划，可能在处理过程中遇到了问题。"
+
+    except Exception as e:
+        return f"程序出现错误: {e}"
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main_chat_loop())
-    except Exception as e:
-        print(f"程序出现未预料的错误: {e}")
+    with gr.Blocks() as demo:
+        gr.Markdown("## 🥪 智能食谱助手\n输入你的需求，AI 会帮你规划菜单！")
+        chatbot = gr.Chatbot(height=500, type="messages")
+        msg = gr.Textbox(placeholder="请输入你的食谱需求...")
+        clear = gr.Button("清空对话")
+
+
+        def respond_stream(user_message, chat_history):
+            """流式响应函数"""
+            # 添加用户消息
+            chat_history.append({"role": "user", "content": user_message})
+
+            # 添加空的助手消息，用于更新
+            chat_history.append({"role": "assistant", "content": ""})
+
+            # 流式更新助手消息
+            for progress_text in chat_interface_stream(user_message, chat_history):
+                chat_history[-1]["content"] = progress_text
+                yield "", chat_history
+
+
+        def respond_simple(user_message, chat_history):
+            """简单响应函数"""
+            reply = chat_interface(user_message, chat_history)
+            chat_history.append({"role": "user", "content": user_message})
+            chat_history.append({"role": "assistant", "content": reply})
+            return "", chat_history
+
+
+        # 使用流式版本
+        msg.submit(respond_stream, [msg, chatbot], [msg, chatbot])
+        clear.click(lambda: [], None, chatbot, queue=False)
+
+    demo.launch(server_name="0.0.0.0", server_port=7860)
