@@ -1,14 +1,21 @@
 import streamlit as st
 import asyncio
 from dotenv import load_dotenv
+
 load_dotenv()
 from nodes.graph import get_chat_app
+
 
 async def run_recipe_graph_stream(query: str):
     inputs = {"user_raw_query": query}
     app = get_chat_app()
-    async for state in app.astream(inputs):
-        yield state.get("messages", [])
+
+    # 获取每个节点的Message输出
+    async for event in app.astream(inputs, stream_mode="updates"):
+        for node, values in event.items():
+            if "messages" in values:
+                yield values["messages"]
+
 
 def chat_interface_stream(user_message):
     loop = asyncio.new_event_loop()
@@ -30,34 +37,31 @@ def chat_interface_stream(user_message):
 
 
 def main():
-    st.set_page_config(page_title="智能菜谱助手", page_icon="🍲")
-    st.title("🍲 智能菜谱助手")
-    st.write("欢迎使用智能菜谱助手！请输入您的问题或需求，我们将为您提供个性化的菜谱建议和烹饪指导。")
-
     if "messages" not in st.session_state:
-        st.session_state.messages = []
+        st.session_state["messages"] = []
+    if "user_input" not in st.session_state:
+        st.session_state["user_input"] = ""
+
+    placeholder = st.empty()
 
     def submit_message():
-        user_message = st.session_state.user_input
+        user_message = st.session_state["user_input"].strip()
         if user_message:
-            st.session_state.messages.append({"role": "user", "content": user_message})
-            st.session_state.user_input = ""
-            with st.spinner("正在生成回复..."):
-                for response in chat_interface_stream(user_message):
-                    if response:
-                        if len(st.session_state.messages) > 0 and st.session_state.messages[-1]["role"] == "assistant":
-                            st.session_state.messages[-1]["content"] = response
-                        else:
-                            st.session_state.messages.append({"role": "assistant", "content": response})
-                        st.experimental_rerun()
+            st.session_state["messages"].append({"role": "user", "content": user_message})
+            st.session_state["user_input"] = ""
+            assistant_message = ""
+            for response in chat_interface_stream(user_message):  # ✅ 改成 user_message
+                assistant_message += response
+                print(assistant_message)
+                placeholder.markdown(f"**Assistant:** {assistant_message}")
 
-    user_input = st.text_input("请输入您的问题或需求：", key="user_input", on_change=submit_message)
+            st.session_state["messages"].append({"role": "assistant", "content": assistant_message})
 
-    for message in st.session_state.messages:
-        if message["role"] == "user":
-            st.markdown(f"**用户:** {message['content']}")
-        else:
-            st.markdown(f"**助手:** {message['content']}")
+    st.text_input("You:", key="user_input", on_change=submit_message)
+
+    for msg in st.session_state["messages"]:
+        if msg["role"] == "user":
+            st.markdown(f"**You:** {msg['content']}")
 
 
 if __name__ == "__main__":
