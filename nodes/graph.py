@@ -2,7 +2,7 @@
 import os
 from typing import TypedDict, List
 from langchain_core.prompts import ChatPromptTemplate
-from langgraph.graph import StateGraph
+from langgraph.graph import StateGraph, END
 
 from nodes.chains import filter_chain
 from state import RecipeGraphState, RecipeAppState, ParsedRecipe, UserInputPlan, FilterDecision
@@ -328,7 +328,7 @@ def get_chat_app():
     workflow.add_edge("generator", "output")
     #workflow.add_edge("generator", "save_md")
     # 如果 save_md 是最后一步，可以让它指向 END
-    # workflow.add_edge("save_md", END) # 示例
+    workflow.add_edge("output", END) # 示例
 
     # 5. 编译图，并命名为 app 以便导出
     app = workflow.compile()

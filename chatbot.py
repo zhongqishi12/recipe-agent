@@ -7,14 +7,26 @@ from nodes.graph import get_chat_app
 
 
 async def run_recipe_graph_stream(query: str):
+    """
+    逐事件产出 (text, is_final)
+    - is_final=False：过程提示（来自各中间节点的 messages）
+    - is_final=True ：最终结果（来自 output_node 的 final_output）
+    """
     inputs = {"user_raw_query": query}
     app = get_chat_app()
 
-    # 获取每个节点的Message输出
     async for event in app.astream(inputs, stream_mode="updates"):
-        for node, values in event.items():
-            if "messages" in values:
-                yield values["messages"]
+        for _, values in event.items():
+            # ✅ 最终：output_node 会包含 final_output
+            if "final_output" in values and values["final_output"]:
+                yield values["final_output"], True
+                continue
+
+            # ✅ 过程：只拿“最新一条”助手提示，避免重复堆叠
+            if "messages" in values and values["messages"]:
+                assistants = [m["content"] for m in values["messages"] if m.get("role") == "assistant"]
+                if assistants:
+                    yield assistants[-1], False  # 只发出最新一条过程提示
 
 
 def chat_interface_stream(user_message):
@@ -22,10 +34,8 @@ def chat_interface_stream(user_message):
     asyncio.set_event_loop(loop)
 
     async def run_stream():
-        async for messages in run_recipe_graph_stream(user_message):
-            assistant_msgs = [m["content"] for m in messages if m.get("role") == "assistant"]
-            if assistant_msgs:
-                yield "\n\n".join(assistant_msgs)
+        async for text, is_final in run_recipe_graph_stream(user_message):
+            yield text, is_final
 
     agen = run_stream()
     while True:
@@ -47,15 +57,6 @@ def main():
 
     st.title("🍲 智能菜谱助手")
     st.caption("输入你的需求，Agent 会实时显示“正在搜索/解析/筛选/润色”等进度，并给出最终推荐。")
-
-    # 顶部功能区
-    cols = st.columns([1, 1, 6])
-    with cols[0]:
-        if st.button("🧹 清空对话"):
-            st.session_state["messages"] = []
-            st.rerun()
-    with cols[1]:
-        st.write("")  # 占位
 
     st.divider()
 
@@ -84,19 +85,18 @@ def main():
         # 逐步流式展示助手文本（覆盖）
         final_text = ""
         with st.spinner("正在生成中…"):
-            for response in chat_interface_stream(user_message):
-                final_text = response or ""
-                # 覆盖显示（方案A），不会越叠越长
-                placeholder.markdown(f"**助手（生成中）**：\n\n{final_text}")
+            for text, is_final in chat_interface_stream(user_message):
+                if is_final:
+                    # 最终结果：保存，清空占位
+                    final_text = text or ""
+                    placeholder.empty()
+                else:
+                    # 过程提示：仅覆盖显示，不写入历史
+                    placeholder.markdown(f"**助手（进度）**：\n\n{text or ''}")
 
         # 生成结束：把最终文本固化到历史里
-        # 注意：graph.py 的 output_node 已经把 state["final_output"] 追加到了 state["messages"]
-        # 但前端并不知道“最终一版”的纯文本，所以这里以最后一次覆盖文本为准，做一次固化即可
         if final_text:
             st.session_state["messages"].append({"role": "assistant", "content": final_text})
-
-        # 清空临时占位
-        placeholder.empty()
 
         # 触发一次重渲染以显示新历史
         st.rerun()
