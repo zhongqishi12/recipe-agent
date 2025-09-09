@@ -201,6 +201,7 @@ def generate_final_recipe_node(state: RecipeGraphState):
     (新功能) 将解析后的结构化食谱数据，直接格式化为面向用户的Markdown文本。
     """
     print("--- 节点: 正在整理并格式化最终结果 ---")
+    state.setdefault("messages", []).append({"role": "assistant", "content": "🤖正在生成最终结果..."})
 
     # 1. 检查是否有可用的解析后食谱
     if not state['filtered_recipes']:
@@ -210,6 +211,7 @@ def generate_final_recipe_node(state: RecipeGraphState):
     formatter = RecipeFormatter()
     state['final_recipe'] = formatter.format_recipes_to_markdown(state['filtered_recipes'])
     print("--- 节点: 最终结果已格式化完成！ ---")
+
     return state
 
 
@@ -232,6 +234,10 @@ def output_node(state: RecipeGraphState):
     chain = prompt | llm
     refined_output = chain.invoke({"final_recipe": state["final_recipe"]})
     state["final_output"] = refined_output.content
+    print("--- 节点: 润色完成！ ---")
+    # 将润色后的内容也添加到消息列表中
+    print(refined_output.content)
+    state.setdefault("messages", []).append({"role": "assistant", "content": state["final_output"]})
     return state
 
 
