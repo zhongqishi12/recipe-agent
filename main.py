@@ -9,13 +9,15 @@ from nodes.graph import scrape_node, generate_final_recipe_node, parse_recipes_n
     parse_input_node
 import asyncio
 from nodes.graph import filter_recipes_node
+from nodes.search_node import deepsearch_node
 
 
 async def main():
     workflow = StateGraph(RecipeGraphState)
     # 添加节点
     workflow.add_node("input_parser", parse_input_node)
-    workflow.add_node("scraper", scrape_node)
+    workflow.add_node("deepsearch", deepsearch_node)
+    #workflow.add_node("scraper", scrape_node)
     workflow.add_node("filter", filter_recipes_node)
     workflow.add_node("generator", generate_final_recipe_node)
     workflow.add_node("save_md", save_to_markdown_node)  # 新增保存为Markdown的节点
@@ -23,8 +25,8 @@ async def main():
     workflow.set_entry_point("input_parser")
 
     # 添加边，定义流程
-    workflow.add_edge("input_parser", "scraper")
-    workflow.add_edge("scraper", "filter")
+    workflow.add_edge("input_parser", "deepsearch")
+    workflow.add_edge("deepsearch", "filter")
     workflow.add_edge("filter", "generator")
     workflow.add_edge("generator", "save_md")
 
